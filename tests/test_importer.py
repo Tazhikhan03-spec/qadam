@@ -92,3 +92,49 @@ def test_ui(monkeypatch):
     spec = at.session_state["bjbs"][at.session_state["current_bjb"]]
     assert spec["title"] == "БЖБ, 1-нұсқа" and spec["tasks"][0]["reference_solution"] == "sol"
     assert "1-нұсқа" in at.sidebar.selectbox[0].value
+
+
+def para(t):
+    return f"<w:p><w:r><w:t>{t}</w:t></w:r></w:p>"
+
+
+def tbl(rows):
+    return "<w:tbl>" + "".join("<w:tr>" + "".join(f"<w:tc>{para(c)}</w:tc>" for c in r) + "</w:tr>" for r in rows) + "</w:tbl>"
+
+
+def student_sheet(n):
+    return (para("БӨЛІМ БОЙЫНША ЖИЫНТЫҚ БАҒАЛАУ") + para(f"Математика | 5-сынып | {n}-нұсқа") + para("Бөлім: Бөлшек")
+            + para("1-тапсырма. Есепте. (2 балл)") + para(f"а) {n}/5 + 1/5 = ____") + para("Сәттілік!"))
+
+
+TEACHER = para("МҰҒАЛІМГЕ АРНАЛҒАН БАҒАЛАУ ПАРАҒЫ")
+
+
+def test_parse_single_variant_without_ai():
+    doc = make_docx(student_sheet(1) + TEACHER
+                    + tbl([["Тапсырма", "Дұрыс жауап"], ["1а", "2/5"], ["1ә", "9"]])
+                    + tbl([["№", "Дескриптор", "Балл"], ["1", "қосады", "1"]]))
+    v, = importer.extract_without_ai("a.docx", doc)
+    assert v["title"] == "БЖБ: Бөлшек, 1-нұсқа" and v["grade"] == "5"
+    row = v["table"].iloc[0]
+    assert row["Дұрыс жауап"] == "а) 2/5" and row["Тапсырма шарты"] == "Есепте. а) 1/5 + 1/5"
+    text = " ".join(v["warnings"])
+    assert "1ә" in text and "2 балл" in text
+
+
+def test_parse_two_variants_without_ai():
+    doc = make_docx(student_sheet(1) + student_sheet(2) + TEACHER
+                    + tbl([["Тапсырма", "№", "Дескриптор. Білім алушы", "1-нұсқа", "2-нұсқа", "Балл"],
+                           ["1", "1.1", "қосады", "2/5", "3/5", "1"], ["", "1.2", "жазады", "x", "y", "1"],
+                           ["Барлығы", "", "", "", "", "2"]])
+                    + para("Үлгі шешімдер") + para("1-нұсқа") + para("1) бір") + para("2-нұсқа") + para("1) екі"))
+    a, b = importer.extract_without_ai("a.docx", doc)
+    assert b["table"].iloc[0]["Дұрыс жауап"] == "1.1: 3/5; 1.2: y"
+    assert (a["table"].iloc[0]["Үлгі шешім"], b["table"].iloc[0]["Үлгі шешім"]) == ("бір", "екі")
+    assert not a["warnings"] and len(b["table"]) == 2
+
+
+def test_unknown_layout_needs_ai():
+    assert importer.extract_without_ai("a.docx", make_docx(para("Кез келген мәтін"))) is None
+    assert importer.extract_without_ai("a.docx", make_docx(student_sheet(1) + TEACHER)) is None
+    assert importer.extract_without_ai("a.pdf", b"%PDF") is None

@@ -33,26 +33,36 @@ with tab_view:
     st.metric("Ең жоғары ұпай", bjb.max_total(spec))
 
 with tab_doc:
-    st.markdown("БЖБ файлын (.docx немесе .pdf) жүктеңіз. ЖИ оны тапсырма, жауап, дескриптор және баллға бөледі. "
+    st.markdown("БЖБ файлын (.docx немесе .pdf) жүктеңіз. Үлгі пішіндегі Word файлын бағдарлама **ЖИ-сіз бірден** оқиды, "
+                "басқа Word пен PDF-ті ЖИ бөліктерге ажыратады. "
                 "**Сақтамас бұрын кестені өзіңіз тексеріп, түзетіңіз.**")
     doc = st.file_uploader("БЖБ файлы", type=["docx", "pdf"], key="bjb_doc")
-    st.caption("Файл Google Gemini-ге жіберіледі. Файлда адамдардың аты-жөні болмасын.")
-    if st.button("🤖 Файлды оқу", type="primary", disabled=doc is None or not ai.is_configured()):
+    force_ai = st.checkbox("Word файлын да ЖИ-мен оқу")
+    st.caption("ЖИ қолданылса, файл Google Gemini-ге жіберіледі. Файлда адамдардың аты-жөні болмасын.")
+    if st.button("📖 Файлды оқу", type="primary", disabled=doc is None):
         ss.pop("_bjb_draft", None)
-        with st.spinner("ЖИ файлды оқып жатыр… (серверлер жүктелгенде бірнеше минутқа созылуы мүмкін)"):
+        with st.spinner("Файл оқылып жатыр… (ЖИ серверлері жүктелгенде бірнеше минутқа созылуы мүмкін)"):
             try:
-                ss["_bjb_draft"] = {"file_id": doc.file_id, "variants": importer.extract(doc.name, doc.getvalue())}
+                found = None if force_ai else importer.extract_without_ai(doc.name, doc.getvalue())
+                used_ai = found is None
+                if used_ai:
+                    found = importer.extract(doc.name, doc.getvalue())
+                ss["_bjb_draft"] = {"file_id": doc.file_id, "variants": found, "used_ai": used_ai,
+                                    "run": ss.get("_bjb_run", 0) + 1}
+                ss["_bjb_run"] = ss["_bjb_draft"]["run"]
             except (importer.ImportFileError, ai.AIError) as exc:
                 st.error(str(exc))
     draft = ss.get("_bjb_draft")
     if draft and doc is not None and draft["file_id"] == doc.file_id:
         variants = draft["variants"]
+        st.info("Файлды ЖИ оқыды. Әр жолын тексеріңіз." if draft["used_ai"]
+                else "Файлды бағдарлама ЖИ-сіз оқыды. Әр жолын тексеріңіз.")
         n = 0
         if len(variants) > 1:
             n = st.radio("Файлда бірнеше нұсқа бар. Қайсысын тексересіз?", range(len(variants)),
-                         format_func=lambda k: variants[k]["title"], key=f"var_{doc.file_id}")
+                         format_func=lambda k: variants[k]["title"], key=f"var_{doc.file_id}_{draft['run']}")
         v = variants[n]
-        key = f"{doc.file_id}_{n}"
+        key = f"{doc.file_id}_{draft['run']}_{n}"
         for msg in v["warnings"]:
             st.warning(msg)
         d1, d2 = st.columns([3, 1])

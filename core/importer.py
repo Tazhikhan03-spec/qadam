@@ -12,7 +12,7 @@ import zipfile
 
 import pandas as pd
 
-from . import ai, bjb
+from . import ai, bjb, docparse
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
@@ -92,6 +92,16 @@ Return ONLY JSON:
  "tasks": [{"id": "1", "condition": "...", "answer": "...", "solution": "...", "declared_points": 2,
   "descriptors": [{"id": "1.1", "text": "...", "points": 1, "proposed": false}]}]}]}
 """
+
+
+def extract_without_ai(name: str, data: bytes) -> list[dict] | None:
+    """Үлгі пішіндегі .docx файлын ЖИ-сіз оқиды. Пішін танылмаса None."""
+    if not name.lower().endswith(".docx"):
+        return None
+    if len(data) > MAX_FILE:
+        raise ImportFileError("Файл 10 МБ-тан аспауы керек.")
+    raw = docparse.parse(docx_to_text(data))
+    return normalize(raw) if raw else None
 
 
 def extract(name: str, data: bytes) -> list[dict]:

@@ -17,6 +17,9 @@ from .taxonomy import ERROR_TYPES, taxonomy_for_prompt
 
 DEFAULT_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-latest"]
 _WORKING_MODEL: str | None = None
+ROUND_PAUSES = (0, 5, 15, 25, 25)   # серверлер бос болмаса, барлық модельді қайта сынау
+TOTAL_SECONDS = 180                 # жаңа сұрау басталатын уақыт шегі (соңғысы + REQUEST_SECONDS)
+REQUEST_SECONDS = 90
 CONFIDENCE = ("high", "medium", "low")
 
 
@@ -79,7 +82,7 @@ def _client():
         raise AIError("ЖИ кілті бапталмаған. Әкімші GEMINI_API_KEY кілтін Secrets бөліміне қосуы керек.")
     from google import genai
     from google.genai import types
-    return genai.Client(api_key=key, http_options=types.HttpOptions(timeout=90_000))
+    return genai.Client(api_key=key, http_options=types.HttpOptions(timeout=REQUEST_SECONDS * 1000))
 
 
 def _parse_json(text: str):
@@ -105,10 +108,19 @@ def _generate_json(contents: list, system: str, temperature: float = 0.1) -> dic
     )
     global _WORKING_MODEL
     last_error = None
-    busy = False
-    order = ([_WORKING_MODEL] if _WORKING_MODEL else []) + _models(client)
-    for model in dict.fromkeys(order):
-        for attempt in range(2):
+    busy = quota = False
+    deadline = time.monotonic() + TOTAL_SECONDS
+    models = list(dict.fromkeys(([_WORKING_MODEL] if _WORKING_MODEL else []) + _models(client)))
+    skip: set[str] = set()      # бұл сұрауда енді сыналмайтын модельдер (жоқ, лимиті біткен, ұзақ күттірген)
+    bad_json = 0
+    for pause in ROUND_PAUSES:
+        if pause and time.monotonic() + pause < deadline:
+            time.sleep(pause)
+        for model in models:
+            if model in skip:
+                continue
+            if time.monotonic() >= deadline:
+                break
             try:
                 resp = client.models.generate_content(model=model, contents=contents, config=config)
                 data = _parse_json(resp.text)
@@ -118,22 +130,35 @@ def _generate_json(contents: list, system: str, temperature: float = 0.1) -> dic
                 last_error = exc
                 if exc.code in (401, 403):
                     raise AIError("ЖИ кілті жарамсыз немесе бұл аймақта қолжетімсіз.") from exc
-                if exc.code in (404, 429) or exc.code >= 500:
-                    # модель жоқ / лимит / сервер бос емес — келесі модельді сынаймыз
-                    busy = busy or exc.code != 404
-                    break
-                raise AIError(f"ЖИ қызметі қате қайтарды ({exc.code}). Қайталап көріңіз.") from exc
+                if exc.code == 404:
+                    skip.add(model)
+                elif exc.code == 429:
+                    quota = True
+                    if "PerDay" in str(exc):    # күндік лимит; минуттық лимитті келесі айналымда қайталаймыз
+                        skip.add(model)
+                elif exc.code >= 500:
+                    busy = True
+                    if exc.code == 504:
+                        skip.add(model)
+                else:
+                    raise AIError(f"ЖИ қызметі қате қайтарды ({exc.code}). Қайталап көріңіз.") from exc
             except (json.JSONDecodeError, ValueError) as exc:
                 last_error = exc
-                if attempt == 0:
-                    continue
-                break
+                bad_json += 1
+                if bad_json >= 3:
+                    raise AIError("ЖИ жауабын оқу мүмкін болмады. Қайталап көріңіз.") from exc
             except Exception as exc:  # noqa: BLE001 — желі қатесі, уақыт шегі т.б.
                 last_error = exc
                 busy = True
-                break
+                skip.add(model)
+        if time.monotonic() >= deadline or all(m in skip for m in models):
+            break
     if busy:
         raise AIError("Google ЖИ серверлері қазір қатты жүктелген. 1–2 минуттан кейін қайталап көріңіз.")
+    if quota:
+        raise AIError("ЖИ-дің тегін сұраныс лимиті таусылды. Бірнеше минуттан кейін қайталап көріңіз, болмаса ертең.")
+    if bad_json:
+        raise AIError("ЖИ жауабын оқу мүмкін болмады. Қайталап көріңіз.")
     raise AIError(f"Қолжетімді ЖИ моделі табылмады: {last_error}")
 
 

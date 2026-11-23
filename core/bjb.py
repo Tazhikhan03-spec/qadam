@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import zlib
 from pathlib import Path
 
 import pandas as pd
@@ -60,7 +61,7 @@ def all_descriptors(spec: dict) -> list[dict]:
     return [dict(d, task_id=t["id"]) for t in spec["tasks"] for d in t["descriptors"]]
 
 
-TABLE_COLUMNS = ["Тапсырма №", "Тапсырма шарты", "Дұрыс жауап", "Дескриптор №", "Дескриптор", "Ұпай"]
+TABLE_COLUMNS = ["Тапсырма №", "Тапсырма шарты", "Дұрыс жауап", "Үлгі шешім", "Дескриптор №", "Дескриптор", "Ұпай"]
 
 
 def to_table(spec: dict) -> pd.DataFrame:
@@ -71,6 +72,7 @@ def to_table(spec: dict) -> pd.DataFrame:
                 "Тапсырма №": t["id"],
                 "Тапсырма шарты": t["condition"] if i == 0 else "",
                 "Дұрыс жауап": t.get("reference_answer", "") if i == 0 else "",
+                "Үлгі шешім": t.get("reference_solution", "") if i == 0 else "",
                 "Дескриптор №": d["id"],
                 "Дескриптор": d["text"],
                 "Ұпай": d["max_points"],
@@ -91,11 +93,14 @@ def from_table(title: str, grade: str, df: pd.DataFrame) -> dict:
         tid = str(row["Тапсырма №"]).strip()
         if not tid:
             continue
-        task = tasks.setdefault(tid, {"id": tid, "condition": "", "reference_answer": "", "descriptors": []})
+        task = tasks.setdefault(tid, {"id": tid, "condition": "", "reference_answer": "",
+                                     "reference_solution": "", "descriptors": []})
         if str(row["Тапсырма шарты"]).strip():
             task["condition"] = str(row["Тапсырма шарты"]).strip()
         if str(row["Дұрыс жауап"]).strip():
             task["reference_answer"] = str(row["Дұрыс жауап"]).strip()
+        if str(row.get("Үлгі шешім", "")).strip():
+            task["reference_solution"] = str(row["Үлгі шешім"]).strip()
         did = str(row["Дескриптор №"]).strip()
         dtext = str(row["Дескриптор"]).strip()
         if did and dtext:
@@ -105,7 +110,7 @@ def from_table(title: str, grade: str, df: pd.DataFrame) -> dict:
                 pts = 1
             task["descriptors"].append({"id": did, "text": dtext, "max_points": pts})
     spec = {
-        "id": "custom_" + slugify(title),
+        "id": f"custom_{slugify(title)[:40]}_{zlib.crc32(title.strip().encode()):08x}",
         "title": title.strip() or "Жаңа БЖБ",
         "grade": str(grade).strip(),
         "subject": "Математика",

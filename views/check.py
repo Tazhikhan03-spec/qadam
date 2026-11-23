@@ -51,7 +51,7 @@ if ss.pending is None:
         elif any(r["student_code"] == code.strip() for r in state.records_for(spec["id"])):
             st.warning(f"{code} коды бұл БЖБ бойынша тексерілген. Басқа код енгізіңіз.")
         else:
-            with st.spinner("ЖИ жұмысты оқып, қадамдап талдап жатыр… (әдетте 10–40 секунд; Google серверлері жүктелген кезде 2–3 минутқа дейін)"):
+            with st.spinner("ЖИ жұмысты оқып, қадамдап талдап жатыр… (Google серверлері жүктелген кезде бірнеше минутқа созылуы мүмкін)"):
                 try:
                     result, ai_seconds = ai.check_work(spec, [f.getvalue() for f in files])
                 except ai.AIError as exc:

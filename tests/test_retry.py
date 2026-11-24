@@ -57,3 +57,16 @@ def test_bad_json(monkeypatch):
     setup(monkeypatch, lambda m, n: "not json")
     with pytest.raises(ai.AIError, match="оқу мүмкін"):
         ai._generate_json(["x"], "s")
+
+
+def test_light_model_is_flagged_and_not_sticky(monkeypatch):
+    calls = setup(monkeypatch, lambda m, n: 503 if m == "a" else '{"ok": 1}')
+    monkeypatch.setattr(ai, "_models", lambda c=None: ["a", "b-lite"])
+    meta = {}
+    ai._generate_json(["x"], "s", meta=meta)
+    ai._generate_json(["x"], "s")
+    assert meta["model"] == "b-lite" and calls == ["a", "b-lite", "a", "b-lite"]
+    res = {"tasks": [{"descriptors": [{"confidence": "high"}]}]}
+    assert ai.mark_light(res, "b-lite")["tasks"][0]["descriptors"][0]["confidence"] == "low"
+    res = {"tasks": [{"descriptors": [{"confidence": "high"}]}]}
+    assert ai.mark_light(res, "b")["tasks"][0]["descriptors"][0]["confidence"] == "high"

@@ -96,7 +96,7 @@ def _parse_json(text: str):
         raise
 
 
-def _generate_json(contents: list, system: str, temperature: float = 0.1) -> dict:
+def _generate_json(contents: list, system: str, temperature: float = 0.1, meta: dict | None = None) -> dict:
     from google.genai import errors, types
 
     client = _client()
@@ -123,7 +123,10 @@ def _generate_json(contents: list, system: str, temperature: float = 0.1) -> dic
             try:
                 resp = client.models.generate_content(model=model, contents=contents, config=config)
                 data = _parse_json(resp.text)
-                _WORKING_MODEL = model
+                if not model.endswith("-lite"):     # жеңіл модель келесі тексерулерде бірінші болып қалмасын
+                    _WORKING_MODEL = model
+                if meta is not None:
+                    meta["model"] = model
                 return data
             except errors.APIError as exc:
                 last_error = exc
@@ -254,9 +257,20 @@ def check_work(spec: dict, images: list[bytes]) -> tuple[dict, float]:
         + f"\n\nThe photo(s) above contain one student's work ({len(images)} page(s)). Check it."
     )
     started = time.perf_counter()
-    raw = _generate_json(parts, CHECK_SYSTEM.format(taxonomy=taxonomy_for_prompt()))
+    meta: dict = {}
+    raw = _generate_json(parts, CHECK_SYSTEM.format(taxonomy=taxonomy_for_prompt()), meta=meta)
     elapsed = time.perf_counter() - started
-    return normalize_check(raw, spec), elapsed
+    return mark_light(normalize_check(raw, spec), meta.get("model", "")), elapsed
+
+
+def mark_light(result: dict, model: str) -> dict:
+    """Жеңіл модель қолжазбада жиірек қателеседі: оның әр бағасын мұғалімге тексертеміз."""
+    result["light_model"] = model.endswith("-lite")
+    if result["light_model"]:
+        for task in result["tasks"]:
+            for d in task["descriptors"]:
+                d["confidence"] = "low"
+    return result
 
 
 def normalize_check(raw: dict, spec: dict) -> dict:
